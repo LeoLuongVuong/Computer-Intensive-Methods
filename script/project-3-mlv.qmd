@@ -1,0 +1,833 @@
+---
+title: |
+  Computer Intensive Methods
+  Final project 3
+author:   
+  - My-Luong Vuong  
+format: 
+  pdf:
+    documentclass: article
+    fig-pos: 'b'
+editor: visual
+geometry:
+      - inner=1cm
+      - outer=1cm
+      - top=1cm
+      - bottom=1cm
+---
+
+```{r load the necessary libraries}
+#| echo: false
+#| warning: false
+
+library(tidyverse)
+library(Ecdat)
+library(caret)
+library(boot)
+
+```
+
+```{r data manipulation}
+#| include: false
+#| warning: false
+#| output: false
+
+# data contains information over an experiment was conducted to measure and compare the effectiveness of various feed supplements on the growth rate of chickens
+head(chickwts)
+str(chickwts)
+
+```
+**Research question**: Is there a difference between the chicks' weights across the diet groups?
+
+# Question 1
+
+## Formulate a one-way ANOVA model for the problem
+
+The one-way ANOVA model is:
+
+$$
+Y_{ij} = \mu + \alpha_j + \epsilon_{ij} \quad \text{for} \quad i = 1, \ldots, 71; \quad j = 1, \ldots, 6; \quad \epsilon_{ij} \sim \text{iid} \, N(0, \sigma^2)
+$$
+
+where $Y_{ij}$ is the $i$-th weight from the $j$-th feed, and $\alpha_j$ is the effect for the $j$-th feed group.
+
+## Formulate the null hypothesis and the alternative
+
+The hypotheses associated with the model are:
+
+$$
+H_0 : \alpha_1 = \alpha_2 = \cdots = \alpha_6 = 0
+$$
+$$
+H_1 : \text{at least one } \alpha_j \text{ is different from } 0
+$$
+
+## Formulate the test statistic
+
+The test statistic is given as:
+
+$$
+F = \frac{\sum_{j=1}^6 n_j (\bar{x}_j - \bar{x})^2 / 5}{\sum_{i=1}^{n_j} \sum_{j=1}^6 (x_{ij} - \bar{x}_j)^2 / 65}
+$$
+
+and the critical value is found in a table of probability values for the F distribution with degrees of freedom $\text{df}_1 = 5$ and $\text{df}_2 = 65$. Also, $n_j$ is the sample size in the $j$-th group, $\bar{x}_j$ is the sample mean of the $j$-th group, and $\bar{x}$ is the overall mean.
+
+```{r fig-lm-res}
+#| echo: false
+#| warning: false
+#| label: fig-box-chick
+#| fig-cap: "Boxplot of the feeds on weight of chicks"
+#| fig-pos: H
+#| fig-width: 5
+#| fig-height: 3
+
+ggplot(data = chickwts, aes(x = feed, y = weight)) + 
+  geom_boxplot() + theme_classic()
+```
+The box plot in @fig-box-chick shows the feeds on the weights of the chicks. It seems that the median weight of casein feed is higher than others and the weight of horsebean feeds is the lowest.
+## Test the null hypothesis using the classical $F$-test and test the null hypothesis using a significance level of 5%.
+
+| Source     | df | Sum Sq   | Mean Sq  | F value | Pr(>F) |
+|------------|----|----------|----------|---------|--------|
+| feed       | 5  | 231129.16| 46225.83 | 15.36   | 0.00001|
+| Residuals  | 65 | 195556.02| 3008.55  |         |        |
+: Analysis of variance result {#tbl-anova}
+
+The analysis of variance result is shown in table @tbl-anova. The F statistic (15.36) has p value (0.00001) which is less than 0.05. This implies that we reject the null hypothesis and conclude that the effect of the feeds are not the same on the chicks weight.
+
+## Test the null hypothesis of no diet effect with semi- parametric bootstrap
+
+```{r anova-chick}
+#| include: false
+#| warning: false
+#| output: false
+
+chicken <- chickwts
+fit <- aov(weight ~ feed, data = chicken)
+summary(fit)
+
+```
+In this question we fitted a linear regression model of weight against feed, with feed a categorical variable with 6 levels, $y_i = \beta_0 + \beta_1 I(x_i = 2) + \beta_2 I(x_i = 3) + \beta_3 I(x_i = 4) + \beta_4 I(x_i = 5) + \beta_5 I(x_i = 6) + \varepsilon_i$. To implement the semi-parametric bootstrap procedure for inference, in the first step we fit the null model and calculate the residuals under the null, $e_{0,i}$. Note that the null hypothesis $H_0: \beta_2 = \beta_3 = \beta_4 = \beta_5 = \beta_6 = 0$ implies that $y_i = \beta_0 + \epsilon_i$.
+
+The semi-parametric bootstrap loop for inference ($H_0: \beta_1 = \beta_2 = \beta_3 = \beta_4 = \beta_5 = 0$) consists of the following steps:
+
+1. Resample the residuals vector ($e_{0,i}$), that were obtained under $H_0$.
+
+2. Calculate the bootstrap replicates for the response $y^*_1, \dots, y^*_n$ under the null hypothesis in the following way:
+
+   $$
+   y^*_i = \hat{\beta}_0 + e^*_{0,i}
+   $$
+Here we performed 1000 bootstraps. We then calculated the Monte Carlo p value based on this formula $\frac{1 + \# \left( \left| \beta_{i,b} \right| \geq \left| \beta_{i,\text{obs}} \right| \right)}{B + 1}, \, i = 1, 2, 3, 4, 5$
+
+```{r semi-boot-chick}
+#| include: false
+#| warning: false
+#| output: false
+
+fit.lm <- lm(weight~feed, data = chicken)
+
+beta0 <- summary(fit.lm)$coeff[1,1]
+beta1 <- summary(fit.lm)$coeff[2,1]
+beta2 <- summary(fit.lm)$coeff[3,1]
+beta3 <- summary(fit.lm)$coeff[4,1]
+beta4 <- summary(fit.lm)$coeff[5,1]
+beta5 <- summary(fit.lm)$coeff[6,1]
+
+y <- chicken$weight
+x <- chicken$feed
+
+fit.lm.0 <- lm(y ~ 1)
+summary(fit.lm.0)
+ei.0 <- fit.lm.0$resid
+
+n <- length(x)
+B <- 1000
+beta0.b <- beta1.b <- beta2.b <- beta3.b <- beta4.b <- beta5.b <- c(1:B)
+for (i in 1:B) {
+    e.boot <- sample(ei.0, size = n, replace = T)
+    y.boot <- fit.lm.0$coeff[1] + e.boot
+    x.boot <- x
+    fit.boot <- lm(y.boot ~ x.boot)
+    beta0.b[i] <- fit.boot$coeff[1]
+    beta1.b[i] <- fit.boot$coeff[2]
+    beta2.b[i] <- fit.boot$coeff[3]
+    beta3.b[i] <- fit.boot$coeff[4]
+    beta4.b[i] <- fit.boot$coeff[5]
+    beta5.b[i] <- fit.boot$coeff[6]
+}
+
+p_1 <- (1 + sum(abs(beta1.b) >= abs(beta1))) / (B + 1)
+p_2 <- (1 + sum(abs(beta2.b) >= abs(beta2))) / (B + 1)
+p_3 <- (1 + sum(abs(beta3.b) >= abs(beta3))) / (B + 1)
+p_4 <- (1 + sum(abs(beta4.b) >= abs(beta4))) / (B + 1)
+p_5 <- (1 + sum(abs(beta5.b) >= abs(beta5))) / (B + 1)
+
+```
+The resulted p-values for $\beta_1, \beta_2, \beta_3, \beta_4, \beta_5$ are `r round(p_1, 3), round(p_2, 3), round(p_3, 3), round(p_4, 3), round(p_5, 3)`, respectively. As 3 out of 5 p values are < 0.05, we reject the null hypothesis.
+
+## Permutations test to test the null hypothesis of no diet effect
+
+Here performed the linear regression model again where we did 1000 bootstraps, and sampling without replacement with the outcome variable weight. Finally we calculated the monte carlo p value based on the observed F statistic and the F statistics from all the bootstraps. The formula is similar as above.
+
+```{r permute-test}
+#| include: false
+#| warning: false
+#| output: false
+
+# number of bootstrap
+N <- 1000
+PermuteFunction <- function(y = chicken$weight, x = chicken$feed) {
+  model.resample = lm(sample(y, replace = F) ~ x)
+  fstats = summary(model.resample)$fstat[1]
+  return(fstats)
+}
+
+fstats = numeric(N)
+
+for (i in 1:N) {
+  fstats[i] <- PermuteFunction()
+}
+
+p_permute <- (1 + length(fstats[fstats >= summary(fit.lm)$fstat[1]]))/(N + 1)
+p_permute
+
+```
+The resulted p value is `r round(p_permute, 3)`, indicating a significant result. This proves that we reject the null hypothesis of no diet effect.
+
+## Estimate mean difference between the Sunflower and Soybean diet groups and its 90% CI
+
+```{r soybean sunflower}
+#| include: false
+#| warning: false
+#| output: false
+
+cc <- chicken  |> 
+  filter(feed %in% c("soybean", "sunflower"))
+
+set.seed(123)
+index <- c(1:cc$weight)
+diff1 <- NULL
+x.b <- NULL
+y.b <- NULL
+B <- 1000
+for (i in 1:B) {
+boot.i <- sample(index, length(cc$weight) , replace = T)
+x.b[i] <- boot.i[1:14]
+y.b[i] <- boot.i[15:26]
+diff1[i] <- mean(x.b) - mean(y.b)
+}
+mean(diff1)
+quantile(diff1, probs = c(0.05, 0.95))
+
+```
+
+A non-parametric bootstrap procedure was used where we sampled 1000 bootstrap samples of the soybean and sunflower At each iteration, we computed the mean and the mean of the differences between the two feeds. The difference between the two feeds is given as `r round(mean(diff1), 3)`, while the equal tail 90\% confidence interval is given as `r quantile(diff1, probs = c(0.05, 0.95))[1]` and `r quantile(diff1, probs = c(0.05, 0.95))[2]`.
+
+# Question 2
+
+```{r computers dataset}
+#| include: false
+#| warning: false
+#| output: false
+
+data("Computers") 
+names(Computers)
+head(Computers)
+
+```
+## Estimate the model using the classical OLS approach.
+We simply fitted a linear regression model between price and size of hard drive (hd)
+
+```{r lm computers}
+#| include: false
+#| warning: false
+#| output: false
+
+computer <- lm(price ~ hd, data = Computers)
+summary(computer)
+```
+As the hard drive size increases by 1 MB, the price of the 486 PCs will increase by `r round(computer[["coefficients"]][["hd"]], 3)`, the effect is significant (p value = `r round(summary(computer)$coefficients["hd", "Pr(>|t|)"], 3)`).
+
+## Predict the price and estimate the prediction error
+
+We used the predict() function to predict the price from the model.
+
+```{r predict price}
+#| include: false
+#| warning: false
+#| output: false
+
+price_predict <- predict(computer, newdata = Computers)
+```
+
+The predicted price has a mean of `r round (mean(price_predict), 0)` and ranges from `r round (min(price_predict), 0)` to `r round (max(price_predict), 0)`.
+
+In this linear regression model, the prediction error is quantified by the residual standard error (RSE), a.k.a the root mean squared error (RMSE), which is the square root of the mean of the squared residuals. And the RSE equals `r round(summary(computer)$sigma, 3)` in our model.
+
+```{r mean rss computer}
+#| include: false
+#| warning: false
+#| output: false
+
+summary(computer)$sigma
+
+```
+## 10-fold cross-validation
+
+To perform the 10 fold cross-validation, we first splitted the sample into 10 equal parts. Then for each kth part (k = 1, ..., 10), fit the model to the other 9 parts and calculate the prediction error of the fitted model with the kth part.
+
+```{r 10-fold cross validation}
+#| include: false
+#| warning: false
+#| output: false
+
+# Define the 10-fold cross-validation method
+train_control <- trainControl(method = "cv", number = 10)
+
+# Fit the linear model using 10-fold cross-validation
+model_cv <- train(price ~ hd, data = Computers, method = "lm", trControl = train_control)
+
+# Calculate the prediction error (RMSE or other metrics)
+prediction_error <- model_cv$results$RMSE
+
+```
+The RMSE obtained from the 10 fold cross validation is `r round(prediction_error, 3)`, which is similar to the prediction error obtained from the model.
+
+## Leave one out cross validation
+We implement a leave-one-out-cross-validation procedure for the Computers dataset. At each step, one observation is left out and the regression model is fitted to the n−1 observations, and after which the slope is calculated. As there are 6259 observations, 6259 cross-validations were performed.
+
+```{r loocv}
+#| include: false
+#| warning: false
+#| output: false
+
+n <- length(Computers$price)
+beta.cv <- fit.cv <- c(1:n)
+x <- Computers$hd
+y <- Computers$price
+for(i in 1:n) {
+    x.cv <- x[ - c(i)]
+    y.cv <- y[ - c(i)]
+    fit.lm.cv <- lm(y.cv ~ x.cv)
+    beta.cv[i] <- fit.lm.cv$coeff[2]
+}
+
+```
+```{r fig-loocv}
+#| echo: false
+#| warning: false
+#| label: fig-loocv
+#| fig-pos: H
+#| fig-width: 5
+#| fig-height: 3
+
+plot(beta.cv)
+
+```
+Figure @fig-loocv shows that the slope remains stable across all the cross-validations, except for the cross-validation with a large index (5000+) where there are some larger slope values. Also, few observations at a lower index (around 1000 and 2000) have smaller slopes. These values suggest that there might be 
+influencing observations in the dataset. It is important to note that the differcene of these "outlying observations" with the overall trend is rather small (about 0.004).
+
+## Bootstrap for the 95% of the predicted values
+
+Here we use a non-parametric bootstrap procedure to calculate the 95% CI of the predicted values of the model with 1000 bootstraps. And in this case, we need to sample pair.
+
+```{r 95% predicted value}
+#| include: false
+#| warning: false
+#| output: false
+
+n < length(Computers$price)
+index <- c(1:n)
+index
+B <- 1000
+beta0.b <- beta1.b <- predict.b <- c(1:B)
+computers <- Computers |> 
+  select(price, hd)
+for (i in 1:B) {
+index.b <- sample(index, n, replace = TRUE)
+computers.b <- computers[index.b, ]
+fit.lm.b <- lm(computers.b$price~computers.b$hd)
+predict.b[i] <- predict(fit.lm.b, newdata = computers)
+beta0.b[i] <- summary(fit.lm.b)$coeff[1,1]
+beta1.b[i] <- summary(fit.lm.b)$coeff[2,1]
+}
+quantile(beta0.b, probs = c(0.025,0.975))
+quantile(beta1.b, probs = c(0.025,0.975))
+```
+The 95% equal tail CI resulting from the non-parametric bootstrap for the intercept $\beta_0$ is given by `r quantile(beta0.b, probs = c(0.025, 0.975))`, and for the slope $\beta_1$, the 95% equal tail CI is  r quantile(beta1.b, probs = c(0.025, 0.975)) `.
+
+
+### Standardization
+
+As we have a continuous outcome variable, we can apply the standardization method where the ATE is calculated as the regression coefficient of the treatment in the linear regression model model between the outcome and the treatment together with the covariates. We used R to fit this model.
+
+```{r standardization}
+#| include: false
+#| warning: false
+
+outcome_model <- lm(outcome ~ intervention + expectations_future + ethnicity +
+                      gender + first_generation + school_urbanity + school_fixed +
+                          school_achievement + school_ethnic + school_poverty +
+                          school_size, data = ci_data)
+round(summary(outcome_model)$coefficients, 3)
+```
+
+```{r fig-lm-res}
+#| echo: false
+#| warning: false
+#| label: fig-lm-res
+#| fig-pos: H
+#| fig-width: 18
+#| fig-height: 8
+
+plot(fitted(outcome_model), residuals(outcome_model))
+abline(h = 0, col = "red")
+
+```
+
+```{r fig-lm-qq}
+#| echo: false
+#| warning: false
+#| label: fig-lm-qq
+#| fig-pos: H
+#| fig-width: 18
+#| fig-height: 8
+
+qqnorm(residuals(outcome_model))
+qqline(residuals(outcome_model), col = "red")
+
+```
+
+We checked the linear model assumptions to ensure that the estimates are valid. Firstly, the residuals vs fitted outcome plot shows that the residuals are randomly distributed around zero (@fig-lm-res). Secondly, the normal Q-Q plot shows that the residuals are normally distributed (@fig-lm-qq).
+
+From this analysis we conclude that the intervention has a significant positive effect on the student's performance. Students who received the intervention have on average the performance score of 0.253 the standard deviation more than those who did not receive the intervention (p = 0.000). This comes with a 95% confidence interval from `r round(0.253 - 1.96*0.011, 3)` to `r round(0.253 + 1.96*0.011, 3)`.
+
+### Inverse Probability Treatment Weighting (IPW)
+
+This estimator relies on calculating exposure probabilities conditioning on all the confounders. We used the logistic regression model between the exposure and the confounders to estimate the propensity score. The ATE is then calculated as the average of the difference between the outcome of the treated and the outcome of the untreated weighted by the inverse of the propensity score for the treated and the inverse of 1 minus the propensity score for the untreated.
+
+We estimated the IPW estimator by using ate function in R.
+
+```{r ipw}
+#| include: false
+#| warning: false
+
+ate(outcome ~ intervention | 1 | expectations_future + ethnicity +
+                      gender + first_generation + school_urbanity + school_fixed +
+                          school_achievement + school_ethnic + school_poverty +
+                          school_size, data = ci_data)
+```
+
+This gives us an estimate of the ATE of `r round(0.07087 + 0.17944, 3)` with a 95% confidence interval from `r`r round(0.05154 + 0.19350, 3)`to`r round(0.0902 + 0.1654 , 3)\`, and this effect is highly significant (p = 0.000). Hence, we have a similar conclusion as the standardization method.
+
+### Propensity scores matching
+
+In an observational study, strata can be formed by matching observations based on confounders. Within each stratum, there are two observations—one with ( A_i = 0 ) and confounder ( X_i = x ), and the other with ( A_i = 1 ) and the same confounder value ( X_i = x ). This approach follows a matched pairs design, where the average treatment effect (ATE) is estimated by calculating the mean difference in outcomes between the matched pairs. Propensity scores can also be used for the construction of matching.
+
+In this case, we rely on MatchIt package in R for the analysis. We first calculated the propensity score via a logistic regression that predicts the likelihood that an individual was assigned to the treatment group based on their individual characteristics, i.e. all our confounders. After we have created our matches, we need to determine whether we have actually been successful in creating a balance between exposed and non-exposed groups. We can do this by comparing the means of the covariates in the two groups. We can do this using a diagnostic tool known as a “balance plot”, which examines the average difference between our exposed and non-exposed groups for each matching variable.
+
+```{r ps_match}
+#| echo: false
+#| warning: false
+#| label: fig-ps-balance
+#| fig-pos: H
+#| fig-width: 18
+#| fig-height: 8
+
+ps_match <- matchit(intervention ~ expectations_future + ethnicity +
+                      gender + first_generation + school_urbanity + school_fixed +
+                          school_achievement + school_ethnic + school_poverty +
+                          school_size, data = ci_data)
+love.plot(ps_match, drop.distance = TRUE)
+
+```
+
+@fig-ps-balance shows that propensity score matching has not reduced the differences between the control group and treatment group all the way to zero. Instead, most of the variables are seeing the blue dots move closer to zero, with the exception of the ethnicity and school_ethnic variables which have moved slightly further away from zero. Overall, it looks like our balance has improved quite a bit. In this case, we believe that our matched dataset is balanced enough.
+
+We thus can proceed with estimating the ATE. We can just simply calculate the difference in the outcome variable between the treated and control groups. We fitted a linear regression model between outcome and intervention in the matched data to estimate the ATE.
+
+```{r ps model}
+#| include: false
+#| warning: false
+
+matched <- match.data(ps_match)
+ps_model <- lm(outcome ~ intervention, data = matched)
+round(summary(ps_model)$coefficients, 3)
+```
+
+Once again we conclude that the intervention has a significant positive effect on the student's performance. Students who received the intervention have on average the performance score of 0.253 the standard deviation more than those who did not receive the intervention (p = 0.000). This comes with a 95% confidence interval from `r round(0.253 - 1.96*0.015, 3)` to `r round(0.253 + 1.96*0.015, 3)`.
+
+### Doubly Robust Estimator
+
+The doubly robust estimator is a combination of the standardization and IPW methods. It is doubly robust because it is consistent if either the outcome or the PS model is correctly specified. Here we looked at an Augmented IPW (AIPW) estimator. We relied again on the ate function in R.
+
+```{r aipw}
+#| include: false
+#| warning: false
+
+a <- ate(outcome ~ intervention | intervention + expectations_future + ethnicity +
+                      gender + first_generation + school_urbanity + school_fixed +
+                          school_achievement + school_ethnic + school_poverty +
+                          school_size | expectations_future + ethnicity +
+                      gender + first_generation + school_urbanity + school_fixed +
+                          school_achievement + school_ethnic + school_poverty +
+                          school_size, data = ci_data)
+summary_a <- summary(a)
+summary_a[["asso"]]
+
+```
+
+We again had a similar conclusion, where the ATE for the intervention is 0.25, with the 95% CI of 0.23 to 0.27, and a p-value of 0.000.
+
+**Conclusion**: Our four estimators give us a consistent result that the intervention has a significant positive effect on the student's performance. Specifically, students who received the intervention have on average the performance score of 0.25 the standard deviation more than those who did not receive the intervention (p = 0.000), with the 95% confidence interval from 0.23 to 0.27.
+
+## School achievement and effectiveness of the intervention
+
+To assess whether the effectiveness of the intervention varies by school achievement, we investigated the significance of the interaction term between the intervention and school achievement. We relied on the outcome model in this question.
+
+```{r interaction}
+#| include: false
+#| warning: false
+
+outcome_model_inter <- lm(outcome ~ intervention + expectations_future + ethnicity +
+                      gender + first_generation + school_urbanity + school_fixed +
+                          school_achievement + school_ethnic + school_poverty +
+                          school_size + school_achievement * intervention, data = ci_data)
+round(summary(outcome_model_inter)$coefficients, 3)
+```
+
+The interaction term between the intervention and school achievement is significant (p = 0.050). This suggests that the effectiveness of the intervention varies by school achievement. We can interpret the coefficient of the interaction term as follows: for each unit increase in school achievement, the ATE increases by 0.024.
+
+*Conclusion:* among students who received the intervention, and given all their patient characteristics are the same, as their school achievement is higher by one standard deviation than the average, their performance score will increase by additional 0.024 the standard deviation. The associated 95% confidence interval is `r round(0.024 - 1.96*0.012, 3)` to `r round(0.024 + 1.96*0.012, 3)`.
+
+## Variables affects intervention
+
+Here we are confronted with the question of model selection in which we need to select which interaction terms to include in the model. We relied again on the outcome model in this question. To avoid inflating our type I error, we used sample splitting technique, where we splitted our dataset into 50% for model selection, and 50% for model inference. Although this can lead to reduced power, in our case it is still acceptable as we have a reasonably large sample size of around 10000 observations. Thus we have \~5000 observations for model selection and \~5000 observations for model inference.
+
+We conducted random splitting by assigning each observation to one of the 2 splits randomly. We then selected the first split for model selection (train dataset) and the second split for model inference (test dataset). We used R again, and we set.seed for reproducibility.
+
+We then used the train dataset for model selection. We considered all possible interaction terms between the intervention and the confounders to include in our outcome model built with only fixed effects as above. We employed forward variable selection on the train dataset where interaction terms were included sequentially until the p-value of the interaction term was greater than 0.05.
+
+```{r model selection}
+#| include: false
+#| warning: false
+
+# Step 1: Split the data into training (train_data) and inference (test_data)
+set.seed(123)  # for reproducibility
+n <- nrow(ci_data)
+train_index <- sample(1:n, size = n / 2)
+train_data <- ci_data[train_index, ]
+test_data <- ci_data[-train_index, ]
+
+# Step 2: Base model with fixed effects
+outcome_model_base <- lm(outcome ~ intervention + expectations_future +
+                          ethnicity + gender + first_generation +
+                          school_urbanity + school_fixed + school_achievement +
+                          school_ethnic + school_poverty + school_size,
+                          data = train_data)
+
+# Step 3: Define interaction terms
+interaction_terms <- c(
+  "expectations_future * intervention", "ethnicity * intervention",
+  "gender * intervention", "first_generation * intervention",
+  "school_urbanity * intervention", "school_fixed * intervention",
+  "school_achievement * intervention", "school_ethnic * intervention",
+  "school_poverty * intervention", "school_size * intervention"
+)
+
+# Step 4: Function to calculate p-values for the added interactions
+p_added <- function(y, X, Active_Set = NULL) {
+  x_range <- 1:ncol(X)
+  if (!is.null(Active_Set)) {
+    x_range <- setdiff(x_range, Active_Set)
+  }
+
+  p <- rep(1, length(x_range))
+  for (j in x_range) {
+    # Check if the model has more than 1 predictor before fitting
+    try({
+      m <- lm(y ~ X[, c(j, Active_Set), drop = FALSE])
+
+      # Check if the model has coefficients and can extract p-values
+      if (length(coef(m)) > 1) {
+        p[j] <- summary(m)$coefficients[2, 4]
+      } else {
+        p[j] <- 1  # If the model has no valid coefficients, assign p-value 1
+      }
+    }, silent = TRUE)  # If there's an error, skip that term
+
+  }
+  return(p)
+}
+
+# Step 5: Initialize active set and forward selection loop
+active_set <- NULL
+p_values <- p_added(y = train_data$outcome, X = model.matrix(outcome_model_base), Active_Set = active_set)
+
+# Start forward selection
+p1 <- c()  # to store p-values for each step
+p2 <- c()
+
+while (min(p_values, na.rm = TRUE) < 0.05) {
+  # Find the interaction term with the smallest p-value
+  selected_term <- which.min(p_values)
+  active_set <- c(active_set, selected_term)
+
+  # Recalculate p-values after adding the selected term
+  p_values <- p_added(y = train_data$outcome, X = model.matrix(outcome_model_base), Active_Set = active_set)
+
+  # Store the p-value
+  p1 <- c(p1, min(p_values, na.rm = TRUE))
+  p2 <- c(p2, selected_term)
+}
+
+# Step 6: Output the selected terms and corresponding p-values
+selected_interactions <- interaction_terms[p2]
+selected_p_values <- p1
+# selected_interactions
+# selected_p_values
+
+```
+
+We found seven significant interaction terms using the train dataset including 'r selected_interactions\[1:7\]'. We then fitted these interaction terms on top of the fixed effects using the test dataset.
+
+```{r test data}
+#| include: false
+#| warning: false
+
+# Step 1: Define the formula with fixed effects and selected interaction terms
+interaction_formula <- as.formula(
+  paste("outcome ~ intervention + expectations_future +
+                          ethnicity + gender + first_generation +
+                          school_urbanity + school_fixed + school_achievement +
+                          school_ethnic + school_poverty + school_size +
+         gender * intervention + expectations_future * intervention +
+         ethnicity * intervention + school_urbanity * intervention +
+         school_achievement * intervention + school_poverty * intervention +
+         school_fixed * intervention")
+)
+
+# Step 2: Fit the model on the training data with fixed effects and selected interaction terms
+interaction_model <- lm(interaction_formula, data = test_data)
+
+round(summary(interaction_model)$coefficients, 3)
+```
+
+Only interventionyes:school_poverty, interventionyes:school_fixed, and interventionyes:school_urbanity3 are the significant interaction terms with p-values less than 0.05.
+
+**Conclusion** Based on this model, school_achievement does not significantly modify the intervention effect. school_poverty, school_fixed, and school_urbanity3 significantly modify the intervention effect. As percentage of students believing that intelligence is a fixed trait increases by its one standard deviation, the intervention effect decreases by 0.055 standard deviation compared to the average. As the percentage of students below the poverty line increases by its one standard deviation, the intervention effect increases by 0.044 standard deviation compared to the average. Students living in urban areas have a 0.216 standard deviation lower intervention effect compared to students who do not. All other variables are not significant in modifying the intervention effect.
+
+```{r draft}
+#| include: false
+#| warning: false
+#| output: false
+outcome_model_inter_train <- lm(outcome ~ intervention + expectations_future +
+                            ethnicity + gender + first_generation +
+                            school_urbanity + school_fixed + school_achievement
+                          + school_ethnic + school_poverty + school_size +
+                            expectations_future * intervention +
+                            ethnicity * intervention +
+                            gender * intervention +
+                            first_generation * intervention +
+                            school_urbanity * intervention +
+                            school_fixed * intervention +
+                            school_achievement * intervention +
+                            school_ethnic * intervention +
+                            school_poverty * intervention +
+                            school_size * intervention, data = ci_data)
+round(summary(outcome_model_inter_train)$coefficients, 3)
+
+# Start with the basic model without interaction terms
+outcome_model_base <- lm(outcome ~ intervention + expectations_future +
+                        ethnicity + gender + first_generation +
+                        school_urbanity + school_fixed + school_achievement +
+                        school_ethnic + school_poverty + school_size,
+                        data = ci_data)
+
+# Stepwise forward selection to add interaction terms one at a time based on p-value
+outcome_model_inter_train <- outcome_model_base
+```
+
+## Syntax
+
+```{r code syntax}
+#| output: false
+#| warning: false
+library(tidyverse)
+library(here)
+library(yspec)
+library(targeted)
+library(MatchIt)
+library(cobalt)
+
+# Load the data
+dataDir = here("data")
+ci_data <- read_csv(here(dataDir, "ci_data.csv"))
+
+
+## convert categorical variables to factors
+
+# intervention from 0 1 to no yes
+ci_data <- ci_data %>%
+  mutate(intervention = ifelse(intervention == 0, "no", "yes")) %>%
+  mutate(intervention = as.factor(intervention))
+
+# gender from 1 2 to male female
+ci_data <- ci_data |>
+  mutate(gender = ifelse(gender == 1, "male", "female")) |>
+  mutate(gender = as.factor(gender))
+
+# first_generation from 0 1 to no yes
+ci_data <- ci_data |>
+  mutate(first_generation = ifelse(first_generation == 0, "no", "yes")) |>
+  mutate(first_generation = as.factor(first_generation))
+
+# factor school_urbanity
+ci_data <- ci_data |>
+  mutate(school_urbanity = as.factor(school_urbanity))
+
+# is there any missing data?
+ci_data %>%
+  summarise_all(~sum(is.na(.)))
+
+summary(ci_data)
+
+str(ci_data)
+
+# stadardization
+outcome_model <- lm(outcome ~ intervention + expectations_future + ethnicity +
+                      gender + first_generation + school_urbanity + school_fixed +
+                          school_achievement + school_ethnic + school_poverty +
+                          school_size, data = ci_data)
+round(summary(outcome_model)$coefficients, 3)
+
+plot(fitted(outcome_model), residuals(outcome_model))
+abline(h = 0, col = "red")
+
+qqnorm(residuals(outcome_model))
+qqline(residuals(outcome_model), col = "red")
+
+ate(outcome ~ intervention | 1 | expectations_future + ethnicity +
+                      gender + first_generation + school_urbanity + school_fixed +
+                          school_achievement + school_ethnic + school_poverty +
+                          school_size, data = ci_data)
+
+ps_match <- matchit(intervention ~ expectations_future + ethnicity +
+                      gender + first_generation + school_urbanity + school_fixed +
+                          school_achievement + school_ethnic + school_poverty +
+                          school_size, data = ci_data)
+love.plot(ps_match, drop.distance = TRUE)
+
+matched <- match.data(ps_match)
+ps_model <- lm(outcome ~ intervention, data = matched)
+round(summary(ps_model)$coefficients, 3)
+
+a <- ate(outcome ~ intervention | intervention + expectations_future + ethnicity +
+                      gender + first_generation + school_urbanity + school_fixed +
+                          school_achievement + school_ethnic + school_poverty +
+                          school_size | expectations_future + ethnicity +
+                      gender + first_generation + school_urbanity + school_fixed +
+                          school_achievement + school_ethnic + school_poverty +
+                          school_size, data = ci_data)
+summary_a <- summary(a)
+summary_a[["asso"]]
+
+outcome_model_inter <- lm(outcome ~ intervention + expectations_future + ethnicity +
+                      gender + first_generation + school_urbanity + school_fixed +
+                          school_achievement + school_ethnic + school_poverty +
+                          school_size + school_achievement * intervention, data = ci_data)
+round(summary(outcome_model_inter)$coefficients, 3)
+
+# Step 1: Split the data into training (train_data) and inference (test_data)
+set.seed(123)  # for reproducibility
+n <- nrow(ci_data)
+train_index <- sample(1:n, size = n / 2)
+train_data <- ci_data[train_index, ]
+test_data <- ci_data[-train_index, ]
+
+# Step 2: Base model with fixed effects
+outcome_model_base <- lm(outcome ~ intervention + expectations_future +
+                          ethnicity + gender + first_generation +
+                          school_urbanity + school_fixed + school_achievement +
+                          school_ethnic + school_poverty + school_size,
+                          data = train_data)
+
+# Step 3: Define interaction terms
+interaction_terms <- c(
+  "expectations_future * intervention", "ethnicity * intervention",
+  "gender * intervention", "first_generation * intervention",
+  "school_urbanity * intervention", "school_fixed * intervention",
+  "school_achievement * intervention", "school_ethnic * intervention",
+  "school_poverty * intervention", "school_size * intervention"
+)
+
+# Step 4: Function to calculate p-values for the added interactions
+p_added <- function(y, X, Active_Set = NULL) {
+  x_range <- 1:ncol(X)
+  if (!is.null(Active_Set)) {
+    x_range <- setdiff(x_range, Active_Set)
+  }
+
+  p <- rep(1, length(x_range))
+  for (j in x_range) {
+    # Check if the model has more than 1 predictor before fitting
+    try({
+      m <- lm(y ~ X[, c(j, Active_Set), drop = FALSE])
+
+      # Check if the model has coefficients and can extract p-values
+      if (length(coef(m)) > 1) {
+        p[j] <- summary(m)$coefficients[2, 4]
+      } else {
+        p[j] <- 1  # If the model has no valid coefficients, assign p-value 1
+      }
+    }, silent = TRUE)  # If there's an error, skip that term
+
+  }
+  return(p)
+}
+
+# Step 5: Initialize active set and forward selection loop
+active_set <- NULL
+p_values <- p_added(y = train_data$outcome, X = model.matrix(outcome_model_base), Active_Set = active_set)
+
+# Start forward selection
+p1 <- c()  # to store p-values for each step
+p2 <- c()
+
+while (min(p_values, na.rm = TRUE) < 0.05) {
+  # Find the interaction term with the smallest p-value
+  selected_term <- which.min(p_values)
+  active_set <- c(active_set, selected_term)
+
+  # Recalculate p-values after adding the selected term
+  p_values <- p_added(y = train_data$outcome, X = model.matrix(outcome_model_base), Active_Set = active_set)
+
+  # Store the p-value
+  p1 <- c(p1, min(p_values, na.rm = TRUE))
+  p2 <- c(p2, selected_term)
+}
+
+# Step 6: Output the selected terms and corresponding p-values
+selected_interactions <- interaction_terms[p2]
+selected_p_values <- p1
+
+# Step 1: Define the formula with fixed effects and selected interaction terms
+interaction_formula <- as.formula(
+  paste("outcome ~ intervention + expectations_future +
+                          ethnicity + gender + first_generation +
+                          school_urbanity + school_fixed + school_achievement +
+                          school_ethnic + school_poverty + school_size +
+         gender * intervention + expectations_future * intervention +
+         ethnicity * intervention + school_urbanity * intervention +
+         school_achievement * intervention + school_poverty * intervention +
+         school_fixed * intervention")
+)
+
+# Step 2: Fit the model on the training data with fixed effects and selected interaction terms
+interaction_model <- lm(interaction_formula, data = test_data)
+
+round(summary(interaction_model)$coefficients, 3)
+```
+
+
