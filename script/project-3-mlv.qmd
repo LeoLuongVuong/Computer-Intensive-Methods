@@ -3,7 +3,9 @@ title: |
   Computer Intensive Methods
   Final project 3
 author:   
-  - My-Luong Vuong  
+  - Luong Vuong (2365900)
+  - Ilse Hamers (2366276)
+  - Joseph Kaunda (2364031)
 format: 
   pdf:
     documentclass: article
@@ -201,7 +203,7 @@ p_permute
 
 The resulted p value is `r round(p_permute, 3)`, indicating a significant result. This proves that we reject the null hypothesis of no diet effect.
 
-## Estimate mean difference between the Sunflower and Soybean diet groups and its 90% CI
+## Estimate mean difference between the Sunflower and Soybean diet groups and its 90% CI using a parametric bootstrap
 
 ```{r soybean sunflower}
 #| include: false
@@ -211,24 +213,36 @@ The resulted p value is `r round(p_permute, 3)`, indicating a significant result
 cc <- chicken  |> 
   filter(feed %in% c("soybean", "sunflower"))
 
+cc <- cc |> 
+  mutate(feed_dummy = ifelse(feed == "sunflower", 1, 0))
+
 set.seed(123)
-index <- c(1:cc$weight)
-diff1 <- NULL
-x.b <- NULL
-y.b <- NULL
+
+# fit model
+fit.lm <- lm(weight ~ feed_dummy, data = cc)
+beta0 <- summary(fit.lm)$coeff[1,1]
+beta1 <- summary(fit.lm)$coeff[2,1]
+sigma <- (summary(fit.lm))$sigma
+
+# bootstrap
 B <- 1000
+beta0.b <- beta1.b <- c(1:B)
+n <- length(cc$feed)
+weight.b <- c(1:n)
 for (i in 1:B) {
-boot.i <- sample(index, length(cc$weight) , replace = T)
-x.b[i] <- boot.i[1:14]
-y.b[i] <- boot.i[15:26]
-diff1[i] <- mean(x.b) - mean(y.b)
+  for (j in 1:n) {
+    weight.b[j] <- rnorm(1, beta0 + beta1*cc$feed_dummy[j], sigma)
+  }
+  fit.lm.b <- lm(weight.b ~ cc$feed_dummy)
+  beta0.b[i] <- summary(fit.lm.b)$coeff[1,1]
+  beta1.b[i] <- summary(fit.lm.b)$coeff[2,1]
 }
-mean(diff1)
-quantile(diff1, probs = c(0.05, 0.95))
+quantile(beta1.b, probs = c(0.05, 0.95))
 
 ```
+For parametric bootstrap, we first fit the linear model between weight and feed_dummy, where feed_dummy equals 1 if the diet group is sunflower, and 0 if it is soybean. Thus, estimating the mean difference between two diet groups becomes estimating the slope of the regression model. We estimated the unknown parameters ${\beta}_{0}$, ${\beta}_{1}$ and $\sigma^{2}$ from that model, and within the bootstrap loop we resampled from $N(\hat{\beta}_{0}+\hat{\beta}_{1}x_{i},\hat{\sigma}^2)$  using the R function rnorm(n,mu,sigma).
 
-A non-parametric bootstrap procedure was used where we sampled 1000 bootstrap samples of the soybean and sunflower At each iteration, we computed the mean and the mean of the differences between the two feeds. The difference between the two feeds is given as `r round(mean(diff1), 3)`, while the equal tail 90% confidence interval is given as `r round(quantile(diff1, probs = c(0.05, 0.95))[1], 3)` and `r round(quantile(diff1, probs = c(0.05, 0.95))[2], 3)`.
+With that, we derived the bootstrap parametric distribution of $\hat{\beta}_{1}$ with 1000 bootstraps. **Conclusion:** The mean and the corresponding 90% confidence interval of the mean weight difference between the two feeds group sunflower and soybean are `r round(mean(beta1.b), 3)`, `r round(quantile(beta1.b, probs = c(0.05, 0.95))[1], 3)` and `r round(quantile(beta1.b, probs = c(0.05, 0.95))[2], 3)`, respectively.
 
 # Question 2
 
@@ -285,7 +299,7 @@ summary(computer)$sigma
 
 ## 10-fold cross-validation
 
-To perform the 10 fold cross-validation, we first splitted the sample into 10 equal parts. Then for each kth part (k = 1, ..., 10), fit the model to the other 9 parts and calculate the prediction error of the fitted model with the kth part.
+To perform the 10 fold cross-validation, we first split the sample into 10 equal parts. Then for each kth part (k = 1, ..., 10), fit the model to the other 9 parts and calculate the prediction error of the fitted model with the kth part.
 
 ```{r 10-fold cross validation}
 #| include: false
@@ -562,7 +576,7 @@ mse_jackknife_median <- bias_jackknife_median^2 + var_jackknife_median
 ```
 The MSE estimate for the median is `r round(mse_jackknife_median, 3)`, which is way smaller than the MSE estimate for the mean (`r round(mse_jackknife_mean, 3)`). This makes the median a preferred estimator.
 
-## Let M be the median and let 𝜋(𝑀<0)=𝑃(𝑀<0) . Estimate 𝜋(𝑀<0) , Estimate the distribution of 𝜋̂(𝑀<0) and construct a 95% C.I. for 𝜋(𝑀<0).
+## Let $M$ be the median and let $\pi(M < 0) = P(M < 0).$ Estimate $\pi(M < 0)$, estimate the distribution of $\hat{\pi}(M < 0)$, and construct a 95% C.I. for $\pi(M < 0)$.
 
 To answer this question, we needed to do a nested foor loop where we first did a 1000 bootstrap to get the distribution of the sample median, and from each distribution we can estimate the probability that the median is <0. We then loop over this 1000 times to get the distribution of the probablity.
 
@@ -598,6 +612,8 @@ library(Ecdat)
 library(caret)
 library(boot)
 library(patchwork)
+
+# Question 1
 
 head(chickwts)
 str(chickwts)
@@ -667,20 +683,33 @@ p_permute
 cc <- chicken  |> 
   filter(feed %in% c("soybean", "sunflower"))
 
+cc <- cc |> 
+  mutate(feed_dummy = ifelse(feed == "sunflower", 1, 0))
+
 set.seed(123)
-index <- c(1:cc$weight)
-diff1 <- NULL
-x.b <- NULL
-y.b <- NULL
+
+# fit model
+fit.lm <- lm(weight ~ feed_dummy, data = cc)
+beta0 <- summary(fit.lm)$coeff[1,1]
+beta1 <- summary(fit.lm)$coeff[2,1]
+sigma <- (summary(fit.lm))$sigma
+
+# bootstrap
 B <- 1000
+beta0.b <- beta1.b <- c(1:B)
+n <- length(cc$feed)
+weight.b <- c(1:n)
 for (i in 1:B) {
-boot.i <- sample(index, length(cc$weight) , replace = T)
-x.b[i] <- boot.i[1:14]
-y.b[i] <- boot.i[15:26]
-diff1[i] <- mean(x.b) - mean(y.b)
+  for (j in 1:n) {
+    weight.b[j] <- rnorm(1, beta0 + beta1*cc$feed_dummy[j], sigma)
+  }
+  fit.lm.b <- lm(weight.b ~ cc$feed_dummy)
+  beta0.b[i] <- summary(fit.lm.b)$coeff[1,1]
+  beta1.b[i] <- summary(fit.lm.b)$coeff[2,1]
 }
-mean(diff1)
-quantile(diff1, probs = c(0.05, 0.95))
+quantile(beta1.b, probs = c(0.05, 0.95))
+
+# Question 2
 
 computer <- lm(price ~ hd, data = Computers)
 summary(computer)
@@ -710,6 +739,8 @@ for (i in 1:n) {
 }
 
 plot(beta.cv)
+
+# Question 3
 
 set.seed(123)
 n <- length(Computers$price)
@@ -764,6 +795,8 @@ sebeta1.b[i] <- summary(fit.lm.b)$coeff[2,2]
 }
 quantile(sebeta0.b, probs = c(0.025,0.975))
 quantile(sebeta1.b, probs = c(0.025,0.975))
+
+# Question 4
 
 set.seed(123)
 n <- length(x)
